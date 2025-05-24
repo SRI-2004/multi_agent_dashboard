@@ -443,7 +443,7 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     ws.current = new WebSocket(WS_URL);
     ws.current.onopen = () => {
       console.log("WebSocket Connected. Sending client_ready signal.");
-      ws.current?.send(JSON.stringify({ type: "client_ready", clientName: "ChatbotUI" }));
+      // ws.current?.send(JSON.stringify({ type: "client_ready", clientName: "ChatbotUI" }));
     };
     ws.current.onclose = () => {
       console.log("WebSocket Disconnected");
