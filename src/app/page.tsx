@@ -1,101 +1,292 @@
-import Image from "next/image";
+'use client';
 
-export default function Home() {
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { useWebSocketChat } from '@/hooks/useWebSocket';
+import type { QueryExecution, Message as MessageType, UnifiedProgressItem as UnifiedProgressItemType } from '@/types';
+import { ChatMessageItem } from '@/components/ChatMessageItem';
+import { TableView } from '@/components/TableView';
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import {
+  Card,
+  CardContent,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+  CardDescription
+} from "@/components/ui/card"
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from "@/components/ui/tabs"
+import { X, Loader2, AlertCircle, CheckCircle2, Maximize, Minimize } from 'lucide-react';
+import SandboxPreviewPanel from '@/components/SandboxPreviewPanel';
+import { UnifiedProgressCard } from '@/components/UnifiedProgressCard';
+
+// Define a discriminated union for display items
+type DisplayItem = 
+  | { type: 'message'; data: MessageType; timestamp: number; id: string; }
+  | { type: 'unified_progress'; data: UnifiedProgressItemType; timestamp: number; id: string; };
+
+export default function ChatPage() {
+  const {
+    messages,
+    sendMessage,
+    queryExecutions,
+    activeQueryExecutionId,
+    setActiveQueryExecutionId,
+    isQueryPanelVisible,
+    clearQueryResults,
+    isQueryPanelCollapsed,
+    toggleQueryPanelCollapse,
+    sandboxResult,
+    isSandboxLoading,
+    activeGraphFragment,
+    isSandboxPanelVisible,
+    clearSandboxPreview,
+    isSandboxPanelCollapsed,
+    toggleSandboxPanelCollapse,
+    unifiedProgress,
+    toggleUnifiedProgressCollapse,
+  } = useWebSocketChat();
+  const [newMessage, setNewMessage] = useState('');
+  const messagesEndRef = useRef<null | HTMLDivElement>(null);
+
+  const displayItems: DisplayItem[] = useMemo(() => {
+    // 1. Map all messages from state to DisplayItem structure
+    const allMessageItems: DisplayItem[] = messages.map((msg, index) => ({
+      type: 'message' as 'message',
+      data: msg,
+      timestamp: msg.timestamp,
+      id: `msg-${msg.timestamp}-${index}-${msg.sender}`
+    })); 
+
+    // 2. Sort these message items chronologically
+    const sortedMessageItems = allMessageItems.sort((a, b) => a.timestamp - b.timestamp);
+
+    // 3. If unifiedProgress exists, prepare its display item and insert it strategically
+    if (unifiedProgress) {
+      const progressDisplayItem: DisplayItem = {
+        type: 'unified_progress' as 'unified_progress',
+        data: unifiedProgress,
+        timestamp: unifiedProgress.lastActivityTimestamp, // This timestamp is for the UProgress item itself
+        id: `progress-${unifiedProgress.id}`
+      };
+
+      // Find the index of the last user message
+      let lastUserMessageIndex = -1;
+      for (let i = sortedMessageItems.length - 1; i >= 0; i--) {
+        const item = sortedMessageItems[i];
+        // Check if the item is a message and its sender is 'user'
+        if (item.type === 'message' && item.data.sender === 'user') {
+          lastUserMessageIndex = i;
+          break;
+        }
+      }
+
+      // Insert unifiedProgress after the last user message, or at the beginning if no user message
+      if (lastUserMessageIndex !== -1) {
+        sortedMessageItems.splice(lastUserMessageIndex + 1, 0, progressDisplayItem);
+      } else {
+        // If no user messages, or if we want it strictly at the top before any agent message following no user interaction
+        sortedMessageItems.unshift(progressDisplayItem);
+      }
+      return sortedMessageItems;
+    }
+
+    // If no unifiedProgress, just return the sorted messages
+    return sortedMessageItems;
+  }, [messages, unifiedProgress]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [displayItems]); // Scroll when displayItems change
+
+  const handleSendMessage = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newMessage.trim()) {
+      sendMessage(newMessage.trim());
+      setNewMessage('');
+    }
+  };
+  
+  const getStatusIcon = (status: QueryExecution['status']) => {
+    switch (status) {
+      case 'pending':
+        return <Loader2 className="h-4 w-4 animate-spin mr-1" />;
+      case 'success':
+        return <CheckCircle2 className="h-4 w-4 text-green-500 mr-1" />;
+      case 'error':
+        return <AlertCircle className="h-4 w-4 text-red-500 mr-1" />;
+      default:
+        return null;
+    }
+  };
+
+  const chatCardWidthClass = isQueryPanelVisible || isSandboxPanelVisible ? "w-1/2" : "w-full max-w-2xl";
+  const chatCardHeightClass = "h-[90vh]";
+
+  let queryResultsCardHeight = "h-full";
+  let sandboxWrapperHeight = "h-0";
+  const rightPanelGap = "gap-4";
+  const minCardHeight = "min-h-[6rem]";
+
+  if (isQueryPanelVisible && isSandboxPanelVisible) {
+    if (isQueryPanelCollapsed && isSandboxPanelCollapsed) {
+      queryResultsCardHeight = `h-14 ${minCardHeight}`;
+      sandboxWrapperHeight = `h-14 ${minCardHeight}`;
+    } else if (isQueryPanelCollapsed) {
+      queryResultsCardHeight = `h-14 ${minCardHeight}`;
+      sandboxWrapperHeight = `flex-grow ${minCardHeight}`;
+    } else if (isSandboxPanelCollapsed) {
+      queryResultsCardHeight = `flex-grow ${minCardHeight}`;
+      sandboxWrapperHeight = `h-14 ${minCardHeight}`;
+    } else {
+      queryResultsCardHeight = `flex-1 ${minCardHeight}`;
+      sandboxWrapperHeight = `flex-1 ${minCardHeight}`;
+    }
+  } else if (isQueryPanelVisible) {
+    queryResultsCardHeight = isQueryPanelCollapsed ? `h-14 ${minCardHeight}` : `h-full ${minCardHeight}`;
+    sandboxWrapperHeight = "h-0 hidden";
+  } else if (isSandboxPanelVisible) {
+    queryResultsCardHeight = "h-0 hidden";
+    sandboxWrapperHeight = isSandboxPanelCollapsed ? `h-14 ${minCardHeight}` : `h-full ${minCardHeight}`;
+  } else {
+    queryResultsCardHeight = "h-0 hidden";
+    sandboxWrapperHeight = "h-0 hidden";
+  }
+
+  const handleClearSandboxPreview = () => {
+    clearSandboxPreview();
+  };
+
+  const mainContentRowJustifyClass = isQueryPanelVisible || isSandboxPanelVisible ? "justify-start" : "justify-center";
+
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+      <div className={`flex w-full mx-auto gap-4 h-[90vh] ${mainContentRowJustifyClass}`}>
+        <Card className={`flex flex-col ${chatCardWidthClass} ${chatCardHeightClass}`}>
+          <CardHeader>
+            <CardTitle>Chatbot</CardTitle>
+          </CardHeader>
+          <CardContent className="flex-grow overflow-y-auto p-6 space-y-4">
+            {displayItems.map((item) => {
+              if (item.type === 'message') {
+                return <ChatMessageItem key={item.id} msg={item.data as MessageType} />;
+              }
+              if (item.type === 'unified_progress') {
+                return <UnifiedProgressCard key={item.id} item={item.data as UnifiedProgressItemType} onToggleCollapse={toggleUnifiedProgressCollapse} />;
+              }
+              return null;
+            })}
+            <div ref={messagesEndRef} />
+          </CardContent>
+          <CardFooter className="p-6 border-t">
+            <form onSubmit={handleSendMessage} className="flex w-full space-x-2">
+              <Input
+                type="text"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                placeholder="Type your message..."
+                className="flex-grow"
+                autoFocus
+              />
+              <Button type="submit">Send</Button>
+            </form>
+          </CardFooter>
+        </Card>
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+        {(isQueryPanelVisible || isSandboxPanelVisible) && (
+          <div className={`w-1/2 flex flex-col ${rightPanelGap} h-full`}>
+            {isQueryPanelVisible && (
+              <Card className={`flex flex-col w-full ${queryResultsCardHeight} transition-all duration-300 ease-in-out`}>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <div>
+                    <CardTitle>Query Results</CardTitle>
+                    {!isQueryPanelCollapsed && <CardDescription>Data from executed Cypher queries.</CardDescription>}
+                  </div>
+                  <div className="flex items-center">
+                    <Button variant="ghost" size="icon" onClick={toggleQueryPanelCollapse} aria-label={isQueryPanelCollapsed ? "Expand Query Results" : "Collapse Query Results"} className="mr-1">
+                      {isQueryPanelCollapsed ? <Maximize className="h-4 w-4" /> : <Minimize className="h-4 w-4" />}
+                    </Button>
+                    <Button variant="ghost" size="icon" onClick={clearQueryResults} aria-label="Close query panel">
+                      <X className="h-5 w-5" />
+                    </Button>
+                  </div>
+                </CardHeader>
+                {!isQueryPanelCollapsed && (
+                  <>
+                    <CardContent className="flex-grow overflow-hidden p-0 relative flex flex-col">
+                      {queryExecutions.length > 0 && activeQueryExecutionId ? (
+                        <Tabs value={activeQueryExecutionId} onValueChange={setActiveQueryExecutionId} className="flex flex-col flex-grow h-full w-full">
+                          <TabsList className="mx-2 mt-2 shrink-0 overflow-x-auto whitespace-nowrap justify-start">
+                            {queryExecutions.map((exec, index) => (
+                              <TabsTrigger key={exec.id} value={exec.id} className="text-xs px-2 py-1.5 h-auto flex items-center">
+                                {getStatusIcon(exec.status)}
+                                Tab {index + 1}                        
+                              </TabsTrigger>
+                            ))}
+                          </TabsList>
+                          {queryExecutions.map((exec) => (
+                            <TabsContent key={exec.id} value={exec.id} className="flex-grow overflow-y-auto p-1 m-0 h-full">
+                              {exec.status === 'pending' && (
+                                <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
+                                  <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading results...
+                                </div>
+                              )}
+                              {exec.status === 'success' && (
+                                <TableView data={exec.records} title={`Results for Query ${queryExecutions.findIndex(e => e.id === exec.id) + 1}`} />
+                              )}
+                              {exec.status === 'error' && (
+                                <div className="p-6 text-red-500">
+                                  <p className="font-semibold">Error executing query:</p>
+                                  <p className="text-sm mt-1 whitespace-pre-wrap">{exec.errorDetails || 'Unknown error'}</p>
+                                  <p className="text-xs mt-2 text-muted-foreground">Query: <pre className="inline whitespace-pre-wrap">{exec.query}</pre></p>
+                                </div>
+                              )}
+                            </TabsContent>
+                          ))}
+                        </Tabs>
+                      ) : (
+                        <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
+                          {isQueryPanelVisible && queryExecutions.length === 0 ? "No queries executed yet or panel was cleared." : "Processing..."}
+                        </div>
+                      )}
+                    </CardContent>
+                    <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
+                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId) ? 
+                        `${queryExecutions.find(e => e.id === activeQueryExecutionId)?.records?.length || 0} record(s) in active tab. Total queries: ${queryExecutions.length}` 
+                        : "No active query or data."}
+                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'success' && "Query executed successfully."}
+                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'error' && "Query execution failed."}
+                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'pending' && "Query pending..."}
+                    </CardFooter>
+                  </>
+                )}
+              </Card>
+            )}
+
+            {isSandboxPanelVisible && (
+              <SandboxPreviewPanel 
+                isPanelVisible={isSandboxPanelVisible}
+                isPanelCollapsed={isSandboxPanelCollapsed}
+                togglePanelCollapse={toggleSandboxPanelCollapse}
+                sandboxResult={sandboxResult}
+                isLoading={isSandboxLoading}
+                activeFragment={activeGraphFragment}
+                clearSandboxPreview={handleClearSandboxPreview}
+                heightClass={sandboxWrapperHeight}
+              />
+            )}
+          </div>
+        )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
     </div>
   );
 }
