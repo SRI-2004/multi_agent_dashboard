@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { UnifiedProgressItem, ThinkingStepStreamItem, ToolCallStreamItem } from '@/types';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -8,6 +8,7 @@ import { IndividualToolCallDisplay } from './IndividualToolCallDisplay';
 interface UnifiedProgressCardProps {
   item: UnifiedProgressItem;
   onToggleCollapse: () => void;
+  isAgentProcessing: boolean;
 }
 
 const markdownComponents = {
@@ -31,16 +32,34 @@ const markdownComponents = {
   em: ({node, ...props}: {node?: any, [key: string]: any}) => <em className="italic" {...props} />,
 };
 
-export function UnifiedProgressCard({ item, onToggleCollapse }: UnifiedProgressCardProps) {
+export function UnifiedProgressCard({ item, onToggleCollapse, isAgentProcessing }: UnifiedProgressCardProps) {
+  const scrollableContainerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!item.isCollapsed && scrollableContainerRef.current) {
+      scrollableContainerRef.current.scrollTop = scrollableContainerRef.current.scrollHeight;
+    }
+  }, [item.progressStream, item.isCollapsed]);
+
   return (
     <div className="bg-muted/60 border border-border rounded-xl shadow-sm my-3 w-full max-w-[85%] relative group">
       <div 
         className="flex items-center justify-between px-4 py-2 border-b border-border cursor-pointer hover:bg-muted/80 transition-colors" 
         onClick={onToggleCollapse}
       >
-        <h3 className="font-semibold text-sm text-muted-foreground">
-          Agent Activity Log {item.isCollapsed ? '(Click to expand)' : ''}
-        </h3>
+        <div className="flex items-center">
+          <h3 className="font-semibold text-sm text-muted-foreground">
+            Agent Activity Log {item.isCollapsed ? '(Click to expand)' : ''}
+          </h3>
+          {isAgentProcessing && !item.isCollapsed && (
+            <div className="ml-3 flex items-center text-sm font-semibold text-muted-foreground italic">
+              <span className="animate-pulse">Thinking</span>
+              <span className="animate-pulse delay-150">.</span>
+              <span className="animate-pulse delay-300">.</span>
+              <span className="animate-pulse delay-450">.</span>
+            </div>
+          )}
+        </div>
         <button 
           title={item.isCollapsed ? "Expand" : "Collapse"} 
           className="p-1 rounded hover:bg-zinc-700 transition-colors"
@@ -50,7 +69,10 @@ export function UnifiedProgressCard({ item, onToggleCollapse }: UnifiedProgressC
       </div>
 
       {!item.isCollapsed && (
-        <div className="p-4 space-y-3">
+        <div 
+          ref={scrollableContainerRef}
+          className="p-4 space-y-3 max-h-96 overflow-y-auto"
+        >
           {item.progressStream && item.progressStream.length > 0 ? (
             item.progressStream.map((streamItem) => {
               if (streamItem.type === 'thinking_step') {

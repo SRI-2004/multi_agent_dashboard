@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useWebSocketChat } from '@/hooks/useWebSocket';
 import type { QueryExecution, Message as MessageType, UnifiedProgressItem as UnifiedProgressItemType } from '@/types';
 import { ChatMessageItem } from '@/components/ChatMessageItem';
@@ -50,9 +50,11 @@ export default function ChatPage() {
     toggleSandboxPanelCollapse,
     unifiedProgress,
     toggleUnifiedProgressCollapse,
+    isAgentProcessing,
   } = useWebSocketChat();
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
+  const unifiedProgressCardRef = useRef<null | HTMLDivElement>(null);
 
   const displayItems: DisplayItem[] = useMemo(() => {
     // 1. Map all messages from state to DisplayItem structure
@@ -100,13 +102,43 @@ export default function ChatPage() {
     return sortedMessageItems;
   }, [messages, unifiedProgress]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }
+  const scrollToBottom = useCallback(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    }
+  }, []);
 
   useEffect(() => {
-    scrollToBottom();
-  }, [displayItems]); // Scroll when displayItems change
+    const lastItem = displayItems.length > 0 ? displayItems[displayItems.length - 1] : null;
+    const lastActivityTimestamp = lastItem?.timestamp;
+    const unifiedProgressTimestamp = unifiedProgress?.lastActivityTimestamp;
+
+    // If agent is processing, card exists and is not collapsed, ensure it's in view.
+    if (isAgentProcessing && unifiedProgress && !unifiedProgress.isCollapsed && unifiedProgressCardRef.current) {
+      // If the URS card was the last thing to update, scroll to it.
+      if (unifiedProgressTimestamp && lastActivityTimestamp && unifiedProgressTimestamp >= lastActivityTimestamp) {
+        unifiedProgressCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      } else {
+        // Agent is processing, URS is open, but a new message might have arrived.
+        // We want to keep URS in view, so if it's not already fully visible, scroll to it.
+        // This is a bit tricky to do perfectly without knowing if it's *already* fully in view.
+        // For now, if agent is busy, let's prioritize URS card by scrolling to it if it received the latest update.
+        // If a new regular message is the latest, the existing scrollToBottom below will handle it if agent ISN'T processing.
+        // If agent IS processing and a new message is latest, we *don't* want to scroll to bottom of chat, potentially hiding URS.
+        // So, if unifiedProgressTimestamp is older, we simply do nothing here, preventing scroll to bottom.
+        // This effectively keeps the current view if URS is visible and agent is busy.
+        if (!(unifiedProgressTimestamp && lastActivityTimestamp && unifiedProgressTimestamp >= lastActivityTimestamp)) {
+            // If URS is not the latest, but agent is busy and URS is open, do nothing to prevent scroll to bottom.
+            // User might be looking at URS.
+            console.log("[Scroll] Agent processing, URS open, new message likely. Preventing scroll to bottom.");
+        } else {
+             unifiedProgressCardRef.current.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+      }
+    } else if (messagesEndRef.current) { // Agent not processing, or URS collapsed/non-existent
+      scrollToBottom();
+    }
+  }, [displayItems, unifiedProgress, scrollToBottom, isAgentProcessing]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -181,7 +213,15 @@ export default function ChatPage() {
                 return <ChatMessageItem key={item.id} msg={item.data as MessageType} />;
               }
               if (item.type === 'unified_progress') {
-                return <UnifiedProgressCard key={item.id} item={item.data as UnifiedProgressItemType} onToggleCollapse={toggleUnifiedProgressCollapse} />;
+                return (
+                  <div key={item.id} ref={unifiedProgressCardRef}>
+                    <UnifiedProgressCard 
+                      item={item.data as UnifiedProgressItemType} 
+                      onToggleCollapse={toggleUnifiedProgressCollapse} 
+                      isAgentProcessing={isAgentProcessing}
+                    />
+                  </div>
+                );
               }
               return null;
             })}

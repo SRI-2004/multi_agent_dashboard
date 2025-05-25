@@ -20,6 +20,14 @@ import { v4 as uuidv4 } from 'uuid';
 
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8082";
 
+const INITIAL_WELCOME_MESSAGE_CONTENT = `## Ad Optimiser Agent\n\nHi, I'm your Ad Optimiser. I'm here to help you analyze and optimize your marketing campaigns across platforms. How can I help you?`;
+
+const initialMessage: Message = {
+  sender: 'agent',
+  content: INITIAL_WELCOME_MESSAGE_CONTENT,
+  timestamp: Date.now(), // Use current time, or a fixed early time if preferred
+};
+
 // Helper function to extract text content from a specific tag
 const extractTextFromTag = (rawContent: string, tagName: string): string | null => {
   const regex = new RegExp(`<${tagName}>([\\s\\S]*?)<\\/${tagName}>`, 'i');
@@ -54,10 +62,11 @@ interface UseWebSocketChatReturn {
   clearSandboxPreview: () => void;
   unifiedProgress: UnifiedProgressItem | null;
   toggleUnifiedProgressCollapse: () => void;
+  isAgentProcessing: boolean;
 }
 
 export function useWebSocketChat(): UseWebSocketChatReturn {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [messages, setMessages] = useState<Message[]>([initialMessage]);
   const ws = useRef<WebSocket | null>(null);
   const [queryExecutions, setQueryExecutions] = useState<QueryExecution[]>([]);
   const [activeQueryExecutionId, setActiveQueryExecutionId] = useState<string | null>(null);
@@ -71,6 +80,7 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
   const [isSandboxPanelCollapsed, setIsSandboxPanelCollapsed] = useState<boolean>(false);
 
   const [unifiedProgress, setUnifiedProgress] = useState<UnifiedProgressItem | null>(null);
+  const [isAgentProcessing, setIsAgentProcessing] = useState<boolean>(false);
 
   const toggleUnifiedProgressCollapse = useCallback(() => {
     setUnifiedProgress(prev => prev ? { ...prev, isCollapsed: !prev.isCollapsed } : null);
@@ -98,8 +108,32 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
 
     const currentTimestamp = Date.now();
 
+    // Ensure parsedMessage is an object before accessing type property
+    const messageType = (parsedMessage && typeof parsedMessage === 'object' && (parsedMessage as { type?: string }).type) || null;
+
+    // Handle chat_interaction_done_sentinel explicitly
+    if (messageType === "chat_interaction_done_sentinel") {
+      console.log("[DEBUG] Received chat_interaction_done_sentinel. Agent processing finished.");
+      setIsAgentProcessing(false);
+      return; // No further processing for this sentinel message
+    }
+
+    // NEW: Check for and ignore UserProxy messages embedded in "text" type
+    if (messageType === "text" && typeof parsedMessage.content === 'string') {
+        try {
+            const innerContent = JSON.parse(parsedMessage.content);
+            if (innerContent && innerContent.sender === "UserProxy") {
+                console.log("[DEBUG] Ignoring UserProxy message forwarded by server:", raw);
+                return; // Ignore this message
+            }
+        } catch (e) {
+            // Not a valid JSON or doesn't have the expected structure, proceed with normal parsing
+            // console.log("[DEBUG] Message content is string but not a UserProxy JSON, or failed to parse. Will proceed. Content:", parsedMessage.content);
+        }
+    }
+
     // Handle new tool_call and tool_response types
-    if (parsedMessage.type === "tool_call" || parsedMessage.type === "tool_response") {
+    if (messageType === "tool_call" || messageType === "tool_response") {
       try {
         const eventContentPayload = parsedMessage.content; 
 
@@ -162,6 +196,8 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
                 });
               });
             }
+            // Ensure agent is marked as processing when tool calls are made
+            setIsAgentProcessing(true); 
             return {
                 ...currentProgress,
                 progressStream: [...currentProgress.progressStream, ...newStreamItems],
@@ -300,7 +336,14 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
 
     if (parsedMessage.type === "text" && typeof actualContentString === 'string') {
         if (messageSender === "OrchestratorAgent") {
-            console.log("[DEBUG] OrchestratorAgent text message:", actualContentString);
+            // If the message from OrchestratorAgent does NOT contain "<thinking>", ignore it.
+            if (actualContentString && !actualContentString.includes("<thinking>")) {
+                console.log("[DEBUG] OrchestratorAgent text message does not contain <thinking>. Ignoring. Content:", actualContentString);
+                return; // Ignore the message
+            }
+
+            // If we reach here, the message contains "<thinking>". Proceed with existing logic.
+            console.log("[DEBUG] OrchestratorAgent text message (processing for <thinking>):", actualContentString);
             const thinkingText = extractTextFromTag(actualContentString, 'thinking');
             if (thinkingText) {
                 setUnifiedProgress(prevProgress => {
@@ -436,7 +479,8 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     setActiveGraphFragment,
     setIsSandboxPanelVisible,
     setIsSandboxPanelCollapsed,
-    setUnifiedProgress
+    setUnifiedProgress,
+    setIsAgentProcessing
   ]);
 
   useEffect(() => {
@@ -466,6 +510,8 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     if (ws.current?.readyState === WebSocket.OPEN) {
       const userMessage: Message = { sender: "user", content: message, timestamp: Date.now() };
       setMessages(prev => [...prev, userMessage]);
+      // When user sends a message, agent starts processing
+      setIsAgentProcessing(true); 
       ws.current.send(JSON.stringify({ type: "text", content: message, sender: "user", recipient: "chat_manager", timestamp: userMessage.timestamp }));
     } else {
       setMessages(prev => [...prev, { sender: "system_error", content: "Not connected. Cannot send message.", timestamp: Date.now() }]);
@@ -513,5 +559,6 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     clearSandboxPreview,
     unifiedProgress,
     toggleUnifiedProgressCollapse,
+    isAgentProcessing,
   };
 } 
