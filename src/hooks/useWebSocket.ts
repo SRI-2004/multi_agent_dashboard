@@ -61,8 +61,14 @@ interface UseWebSocketChatReturn {
   toggleSandboxPanelCollapse: () => void;
   clearSandboxPreview: () => void;
   unifiedProgress: UnifiedProgressItem | null;
+  unifiedProgressHistory: UnifiedProgressItem[];
   toggleUnifiedProgressCollapse: () => void;
   isAgentProcessing: boolean;
+  platformToolResult: { type: 'schema' | 'rules', content: string } | null;
+  clearPlatformToolResult: () => void;
+  isToolPanelVisible: boolean;
+  setIsToolPanelVisible: (visible: boolean) => void;
+  setPlatformToolResult: (result: { type: 'schema' | 'rules', content: string } | null) => void;
 }
 
 export function useWebSocketChat(): UseWebSocketChatReturn {
@@ -80,7 +86,14 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
   const [isSandboxPanelCollapsed, setIsSandboxPanelCollapsed] = useState<boolean>(false);
 
   const [unifiedProgress, setUnifiedProgress] = useState<UnifiedProgressItem | null>(null);
+  const [unifiedProgressHistory, setUnifiedProgressHistory] = useState<UnifiedProgressItem[]>([]);
   const [isAgentProcessing, setIsAgentProcessing] = useState<boolean>(false);
+
+  const [platformToolResult, setPlatformToolResult] = useState<{ type: 'schema' | 'rules', content: string } | null>(null);
+  const [isToolPanelVisible, setIsToolPanelVisible] = useState(false);
+
+  // Store all outstanding tool call ids and function names
+  const toolCallIdToFunctionNameRef = useRef(new Map<string, string>());
 
   const toggleUnifiedProgressCollapse = useCallback(() => {
     setUnifiedProgress(prev => prev ? { ...prev, isCollapsed: !prev.isCollapsed } : null);
@@ -145,7 +158,7 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
 
         if (parsedMessage.type === "tool_call") {
           console.log("[DEBUG] Detected tool_call message. Payload:", eventContentPayload);
-          const thinkingContentRaw = eventContentPayload.content as string | undefined; 
+          const thinkingContentRaw = eventContentPayload.content as string | undefined;
 
           setUnifiedProgress(prevProgress => {
             let currentProgress = prevProgress;
@@ -176,27 +189,30 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
             if (backendToolCalls && Array.isArray(backendToolCalls)) {
               backendToolCalls.forEach(btc => {
                 const displayText = (() => {
-                    try {
-                      const args = JSON.parse(btc.function.arguments);
-                      if (args.platform_name) return `${btc.function.name} for ${args.platform_name}`;
-                      if (args.query) return `${btc.function.name}: ${args.query.substring(0,30)}...`;
-                      if (args.description) return `${btc.function.name}: ${args.description.substring(0,30)}...`;
-                    } catch (e) { /* ignore */ }
-                    return btc.function.name;
-                  })();
+                  try {
+                    const args = JSON.parse(btc.function.arguments);
+                    if (args.platform_name) return `${btc.function.name} for ${args.platform_name}`;
+                    if (args.query) return `${btc.function.name}: ${args.query.substring(0,30)}...`;
+                    if (args.description) return `${btc.function.name}: ${args.description.substring(0,30)}...`;
+                  } catch (e) { /* ignore */ }
+                  return btc.function.name;
+                })();
+
+                // Add to outstanding tool call map
+                toolCallIdToFunctionNameRef.current.set(btc.id, btc.function.name);
 
                 newStreamItems.push({
-                    type: 'tool_call_log_entry',
-                    id: btc.id,
-                    functionName: btc.function.name,
-                    arguments: btc.function.arguments,
-                    status: 'pending',
-                    timestamp: currentTimestamp,
-                    displayText: displayText
+                  type: 'tool_call_log_entry',
+                  id: btc.id,
+                  functionName: btc.function.name,
+                  arguments: btc.function.arguments,
+                  status: 'pending',
+                  timestamp: currentTimestamp,
+                  displayText: displayText
                 });
               });
             }
-            // Ensure agent is marked as processing when tool calls are made
+
             setIsAgentProcessing(true); 
             return {
                 ...currentProgress,
@@ -209,32 +225,58 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
           console.log("[DEBUG] Detected tool_response message. Payload:", eventContentPayload);
           const backendToolResponses = eventContentPayload.tool_responses as BackendToolResponse[];
           if (backendToolResponses && Array.isArray(backendToolResponses)) {
-            setUnifiedProgress(prevProgress => {
-              if (!prevProgress) {
-                console.warn("[WARN] Received tool_response but no active unifiedProgress. Responses:", backendToolResponses);
-                return null; 
-              }
-              
-              const updatedStream = prevProgress.progressStream.map(item => {
-                if (item.type === 'tool_call_log_entry') {
-                  const responseItem = backendToolResponses.find(r => r.tool_call_id === item.id);
-                  if (responseItem) {
-                    const isError = false; // Placeholder for actual error detection
-                    return { 
-                      ...item, 
-                      status: isError ? 'error' : 'success' as 'success' | 'error', 
-                      response: !isError ? responseItem.content : undefined,
-                      errorMessage: isError ? responseItem.content : undefined,
-                    }; 
+            backendToolResponses.forEach((responseItem) => {
+              if (responseItem && responseItem.role === 'tool' && responseItem.tool_call_id && responseItem.content) {
+                // Look up function name from outstanding map
+                const functionName = toolCallIdToFunctionNameRef.current.get(responseItem.tool_call_id);
+                if (functionName) {
+                  setUnifiedProgress(prevProgress => {
+                    if (!prevProgress) return prevProgress;
+                    return {
+                      ...prevProgress,
+                      progressStream: prevProgress.progressStream.map(item => {
+                        if (item.type === 'tool_call_log_entry' && item.id === responseItem.tool_call_id) {
+                          return {
+                            ...item,
+                            status: 'success',
+                            response: responseItem.content
+                          };
+                        }
+                        return item;
+                      })
+                    };
+                  });
+                  // Show the correct tool overlay
+                  if (functionName === 'get_platform_schema') {
+                    setPlatformToolResult({ type: 'schema', content: responseItem.content });
+                    setIsToolPanelVisible(true);
+                  } else if (functionName === 'get_platform_prompt_rules') {
+                    setPlatformToolResult({ type: 'rules', content: responseItem.content });
+                    setIsToolPanelVisible(true);
+                  }
+                  // Remove from outstanding map
+                  toolCallIdToFunctionNameRef.current.delete(responseItem.tool_call_id);
+                } else {
+                  // Fallback: existing logic (content heuristics)
+                  let toolName: string | undefined = responseItem.function_name;
+                  if (!toolName && responseItem.content) {
+                    const contentLower = responseItem.content.toLowerCase();
+                    if (contentLower.includes('rules')) {
+                      setPlatformToolResult({
+                        type: 'rules',
+                        content: responseItem.content
+                      });
+                      setIsToolPanelVisible(true);
+                    } else if (contentLower.includes('schema')) {
+                      setPlatformToolResult({
+                        type: 'schema',
+                        content: responseItem.content
+                      });
+                      setIsToolPanelVisible(true);
+                    }
                   }
                 }
-                return item;
-              });
-              return { 
-                  ...prevProgress, 
-                  progressStream: updatedStream, 
-                  lastActivityTimestamp: currentTimestamp
-              };
+              }
             });
           }
         }
@@ -383,11 +425,13 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
                     const queryData = JSON.parse(queryJsonString);
                     if (queryData && queryData.queries && Array.isArray(queryData.queries) && queryData.queries.length > 0) {
                         let firstExecutionId: string | null = null;
+                        const titles: string[] = Array.isArray(queryData.query_titles) ? queryData.query_titles : [];
                         queryData.queries.forEach((queryText: string, index: number) => {
                             if (typeof queryText === 'string' && queryText.trim()) {
                                 const executionId = `${Date.now()}-${index}-${Math.random().toString(36).substring(2, 9)}`;
                                 if (index === 0) firstExecutionId = executionId;
-                                setQueryExecutions(prev => [...prev, { id: executionId, query: queryText, records: null, status: 'pending', errorDetails: undefined }]);
+                                const title = titles[index] || `Query ${index + 1}`;
+                                setQueryExecutions(prev => [...prev, { id: executionId, query: queryText, records: null, status: 'pending', errorDetails: undefined, title }]);
                                 executeCypherQuery(executionId, queryText, querySetters);
                             } else {
                                 console.warn("[WARN] Invalid query text in QueryGeneratorAgent at index", index, ":", queryText);
@@ -421,6 +465,35 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
                     setMessages(prev => [...prev, { sender: messageSender, content: insightText, timestamp: Date.now() }]);
                     contentAdded = true;
                     actualContentString = actualContentString.replace(insightTagRegex, '').trim();
+                    // --- NEW: Show sandbox with placeholder after analysis ---
+                    setActiveGraphFragment({ template: 'chatbot-ui-nextjs-preview', code: '// Thinking...\nThe agent is preparing a visualization. Please wait for the graph code.', filePath: 'src/components/GeneratedPreview.tsx' });
+                    setSandboxResult(null); // No result yet
+                    setIsSandboxPanelVisible(true);
+                    setIsSandboxPanelCollapsed(false);
+                    setIsSandboxLoading(false); // Not loading, just placeholder
+                    // --- NEW: Add sandbox tool card to unified progress ---
+                    setUnifiedProgress(prev => {
+                      if (!prev) return prev;
+                      // Only add if not already present for this analysis
+                      const alreadyPresent = prev.progressStream.some(item => item.type === 'tool_call_log_entry' && item.functionName === 'sandbox_preview');
+                      if (alreadyPresent) return prev;
+                      const sandboxToolCall: ToolCallStreamItem = {
+                        type: 'tool_call_log_entry',
+                        id: `sandbox-preview-${Date.now()}`,
+                        functionName: 'sandbox_preview',
+                        arguments: '',
+                        status: 'success',
+                        response: undefined,
+                        errorMessage: undefined,
+                        timestamp: Date.now(),
+                        displayText: 'Open Sandbox Preview',
+                      };
+                      return {
+                        ...prev,
+                        progressStream: [...prev.progressStream, sandboxToolCall],
+                        lastActivityTimestamp: Date.now(),
+                      };
+                    });
                 } else {
                     console.warn("[WARN] AnalysisAgent: <insight> tag was empty.");
                 }
@@ -480,7 +553,8 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     setIsSandboxPanelVisible,
     setIsSandboxPanelCollapsed,
     setUnifiedProgress,
-    setIsAgentProcessing
+    setIsAgentProcessing,
+    setPlatformToolResult
   ]);
 
   useEffect(() => {
@@ -508,9 +582,13 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
 
   const sendMessage = (message: string) => {
     if (ws.current?.readyState === WebSocket.OPEN) {
+      // Archive the current unifiedProgress if it exists
+      setUnifiedProgressHistory(prev => unifiedProgress ? [...prev, unifiedProgress] : prev);
+      setUnifiedProgress(null); // Start a new log for the new request
+      clearQueryResults(); // Clear previous table results
+      clearSandboxPreview(); // Clear previous sandbox preview
       const userMessage: Message = { sender: "user", content: message, timestamp: Date.now() };
       setMessages(prev => [...prev, userMessage]);
-      // When user sends a message, agent starts processing
       setIsAgentProcessing(true); 
       ws.current.send(JSON.stringify({ type: "text", content: message, sender: "user", recipient: "chat_manager", timestamp: userMessage.timestamp }));
     } else {
@@ -538,6 +616,18 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     setIsSandboxPanelCollapsed(prev => !prev);
   }, []);
 
+  const clearPlatformToolResult = useCallback(() => {
+    setPlatformToolResult(null);
+    setIsToolPanelVisible(false);
+  }, []);
+
+  // On chat reset, clear the outstanding tool call map
+  useEffect(() => {
+    return () => {
+      toolCallIdToFunctionNameRef.current.clear();
+    };
+  }, []);
+
   return {
     messages,
     sendMessage,
@@ -558,7 +648,13 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
     toggleSandboxPanelCollapse,
     clearSandboxPreview,
     unifiedProgress,
+    unifiedProgressHistory,
     toggleUnifiedProgressCollapse,
     isAgentProcessing,
+    platformToolResult,
+    clearPlatformToolResult,
+    isToolPanelVisible,
+    setIsToolPanelVisible,
+    setPlatformToolResult,
   };
 } 

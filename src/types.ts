@@ -23,6 +23,7 @@ export interface QueryExecution {
   records: Array<Record<string, any>> | null;
   status: 'pending' | 'success' | 'error';
   errorDetails?: string;
+  title?: string; // Short technical title for the query (optional for backward compatibility)
 }
 
 // Types for Graph Fragment and Sandbox Execution
@@ -70,6 +71,7 @@ export interface BackendToolResponse {
   tool_call_id: string;
   role: 'tool';
   content: string; // The actual result string from the tool
+  function_name?: string; // Optional function name from backend
 }
 
 // Represents an active tool call being displayed (either standalone or within UnifiedProgressItem)

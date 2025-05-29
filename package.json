@@ -12,6 +12,7 @@
     "@e2b/code-interpreter": "^1.5.0",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.12",
+    "@tanstack/react-table": "^8.21.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "e2b": "^1.2.0-beta.5",

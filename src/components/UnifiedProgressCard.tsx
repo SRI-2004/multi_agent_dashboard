@@ -9,6 +9,8 @@ interface UnifiedProgressCardProps {
   item: UnifiedProgressItem;
   onToggleCollapse: () => void;
   isAgentProcessing: boolean;
+  onToolCallClick?: (toolCall: ToolCallStreamItem) => void;
+  selectedToolCallId?: string | null;
 }
 
 const markdownComponents = {
@@ -32,7 +34,7 @@ const markdownComponents = {
   em: ({node, ...props}: {node?: any, [key: string]: any}) => <em className="italic" {...props} />,
 };
 
-export function UnifiedProgressCard({ item, onToggleCollapse, isAgentProcessing }: UnifiedProgressCardProps) {
+export function UnifiedProgressCard({ item, onToggleCollapse, isAgentProcessing, onToolCallClick, selectedToolCallId }: UnifiedProgressCardProps) {
   const scrollableContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -87,7 +89,12 @@ export function UnifiedProgressCard({ item, onToggleCollapse, isAgentProcessing 
               } else if (streamItem.type === 'tool_call_log_entry') {
                 const toolCall = streamItem as ToolCallStreamItem;
                 return (
-                  <IndividualToolCallDisplay key={toolCall.id} toolCall={toolCall} />
+                  <IndividualToolCallDisplay 
+                    key={toolCall.id} 
+                    toolCall={toolCall} 
+                    onClick={onToolCallClick}
+                    isSelected={selectedToolCallId === toolCall.id}
+                  />
                 );
               }
               return null; // Should not happen if types are correct

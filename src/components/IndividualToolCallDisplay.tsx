@@ -6,6 +6,8 @@ import { CheckCircle2, AlertCircle, Loader2, ChevronDown, ChevronRight, Search, 
 interface IndividualToolCallDisplayProps {
   // toolCall: ActiveToolCall; // Changed
   toolCall: ToolCallStreamItem; // Changed
+  onClick?: (toolCall: ToolCallStreamItem) => void;
+  isSelected?: boolean;
 }
 
 const getToolIcon = (functionName: string) => {
@@ -18,14 +20,17 @@ const getToolIcon = (functionName: string) => {
   return <ChevronsUpDown className="w-4 h-4 mr-2 flex-shrink-0 text-gray-400" />; // Default icon
 };
 
-export function IndividualToolCallDisplay({ toolCall }: IndividualToolCallDisplayProps) {
+export function IndividualToolCallDisplay({ toolCall, onClick, isSelected }: IndividualToolCallDisplayProps) {
   const [isCollapsed, setIsCollapsed] = useState(true); // Default to collapsed
 
   return (
-    <div className="p-3 rounded-lg bg-zinc-800/70 border border-zinc-700/80 shadow-md transition-all hover:border-zinc-600/90 mb-2 last:mb-0">
+    <div className={`p-3 rounded-lg border shadow-md transition-all mb-2 last:mb-0 ${isSelected ? 'border-blue-500 bg-blue-900/30' : 'bg-zinc-800/70 border-zinc-700/80 hover:border-zinc-600/90'}`}>
       <div 
         className="flex items-center justify-between cursor-pointer" 
-        onClick={() => setIsCollapsed(!isCollapsed)}
+        onClick={() => {
+          setIsCollapsed(!isCollapsed);
+          if (onClick && toolCall.status === 'success') onClick(toolCall);
+        }}
       >
         <div className="flex items-center min-w-0">
           <div className="flex-shrink-0">

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useWebSocketChat } from '@/hooks/useWebSocket';
-import type { QueryExecution, Message as MessageType, UnifiedProgressItem as UnifiedProgressItemType } from '@/types';
+import type { QueryExecution, Message as MessageType, UnifiedProgressItem as UnifiedProgressItemType, ToolCallStreamItem } from '@/types';
 import { ChatMessageItem } from '@/components/ChatMessageItem';
 import { TableView } from '@/components/TableView';
 import { Button } from "@/components/ui/button"
@@ -24,6 +24,7 @@ import {
 import { X, Loader2, AlertCircle, CheckCircle2, Maximize, Minimize } from 'lucide-react';
 import SandboxPreviewPanel from '@/components/SandboxPreviewPanel';
 import { UnifiedProgressCard } from '@/components/UnifiedProgressCard';
+import { PlatformToolResultCard } from '@/components/PlatformToolResultCard';
 
 // Define a discriminated union for display items
 type DisplayItem = 
@@ -51,10 +52,18 @@ export default function ChatPage() {
     unifiedProgress,
     toggleUnifiedProgressCollapse,
     isAgentProcessing,
+    platformToolResult,
+    clearPlatformToolResult,
+    isToolPanelVisible,
+    setIsToolPanelVisible,
+    setIsQueryPanelVisible,
+    setPlatformToolResult,
+    setIsSandboxPanelVisible,
   } = useWebSocketChat();
   const [newMessage, setNewMessage] = useState('');
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const unifiedProgressCardRef = useRef<null | HTMLDivElement>(null);
+  const [selectedToolCall, setSelectedToolCall] = useState<{ id: string; functionName: string } | null>(null);
 
   const displayItems: DisplayItem[] = useMemo(() => {
     // 1. Map all messages from state to DisplayItem structure
@@ -200,6 +209,40 @@ export default function ChatPage() {
 
   const mainContentRowJustifyClass = isQueryPanelVisible || isSandboxPanelVisible ? "justify-start" : "justify-center";
 
+  // Determine when to show the tool card
+  const showToolCard = platformToolResult && isToolPanelVisible && (
+    !isQueryPanelVisible ||
+    (isQueryPanelVisible && (
+      queryExecutions.length === 0 ||
+      queryExecutions.every(exec => exec.status === 'pending')
+    ))
+  );
+
+  // Debug log for tool card visibility
+  console.log({
+    platformToolResult,
+    isToolPanelVisible,
+    isQueryPanelVisible,
+    queryExecutions,
+    showToolCard
+  });
+
+  // Handler for tool call click
+  const handleToolCallClick = (toolCall: ToolCallStreamItem) => {
+    setSelectedToolCall({ id: toolCall.id, functionName: toolCall.functionName });
+    if (toolCall.functionName === 'get_platform_schema') {
+      setPlatformToolResult({ type: 'schema', content: toolCall.response || '' });
+      setIsToolPanelVisible(true);
+    } else if (toolCall.functionName === 'get_platform_prompt_rules') {
+      setPlatformToolResult({ type: 'rules', content: toolCall.response || '' });
+      setIsToolPanelVisible(true);
+    } else if (toolCall.functionName === 'execute_cypher_query') {
+      setIsQueryPanelVisible(true);
+    } else if (toolCall.functionName === 'sandbox_preview') {
+      setIsSandboxPanelVisible(true);
+    }
+  };
+
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
       <div className={`flex w-full mx-auto gap-4 h-[90vh] ${mainContentRowJustifyClass}`}>
@@ -219,6 +262,8 @@ export default function ChatPage() {
                       item={item.data as UnifiedProgressItemType} 
                       onToggleCollapse={toggleUnifiedProgressCollapse} 
                       isAgentProcessing={isAgentProcessing}
+                      onToolCallClick={handleToolCallClick}
+                      selectedToolCallId={selectedToolCall?.id}
                     />
                   </div>
                 );
@@ -242,8 +287,8 @@ export default function ChatPage() {
           </CardFooter>
         </Card>
 
-        {(isQueryPanelVisible || isSandboxPanelVisible) && (
-          <div className={`w-1/2 flex flex-col ${rightPanelGap} h-full`}>
+        {(isQueryPanelVisible || isSandboxPanelVisible || isToolPanelVisible) && (
+          <div className={`w-1/2 flex flex-col ${rightPanelGap} h-full relative`}>
             {isQueryPanelVisible && (
               <Card className={`flex flex-col w-full ${queryResultsCardHeight} transition-all duration-300 ease-in-out`}>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -255,7 +300,7 @@ export default function ChatPage() {
                     <Button variant="ghost" size="icon" onClick={toggleQueryPanelCollapse} aria-label={isQueryPanelCollapsed ? "Expand Query Results" : "Collapse Query Results"} className="mr-1">
                       {isQueryPanelCollapsed ? <Maximize className="h-4 w-4" /> : <Minimize className="h-4 w-4" />}
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={clearQueryResults} aria-label="Close query panel">
+                    <Button variant="ghost" size="icon" onClick={() => setIsQueryPanelVisible(false)} aria-label="Close query panel">
                       <X className="h-5 w-5" />
                     </Button>
                   </div>
@@ -269,7 +314,7 @@ export default function ChatPage() {
                             {queryExecutions.map((exec, index) => (
                               <TabsTrigger key={exec.id} value={exec.id} className="text-xs px-2 py-1.5 h-auto flex items-center">
                                 {getStatusIcon(exec.status)}
-                                Tab {index + 1}                        
+                                {exec.title || `Query ${index + 1}`}
                               </TabsTrigger>
                             ))}
                           </TabsList>
@@ -320,9 +365,42 @@ export default function ChatPage() {
                 sandboxResult={sandboxResult}
                 isLoading={isSandboxLoading}
                 activeFragment={activeGraphFragment}
-                clearSandboxPreview={handleClearSandboxPreview}
+                clearSandboxPreview={() => setIsSandboxPanelVisible(false)}
                 heightClass={sandboxWrapperHeight}
               />
+            )}
+
+            {showToolCard && isQueryPanelVisible && (
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-auto">
+                <Card className="flex flex-col w-5/6 max-w-2xl h-fit shadow-2xl border-2 border-primary">
+                  <CardHeader>
+                    <CardTitle>{platformToolResult.type === 'schema' ? 'Platform Schema' : 'Platform Prompt Rules'}</CardTitle>
+                  </CardHeader>
+                  <CardContent className="flex-grow overflow-auto">
+                    <PlatformToolResultCard type={platformToolResult.type} content={platformToolResult.content} />
+                  </CardContent>
+                  <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
+                    <Button variant="ghost" size="icon" onClick={clearPlatformToolResult} aria-label="Close platform tool card">
+                      <X className="h-5 w-5" />
+                    </Button>
+                  </CardFooter>
+                </Card>
+              </div>
+            )}
+            {showToolCard && !isQueryPanelVisible && (
+              <Card className="flex flex-col w-full h-full transition-all duration-300 ease-in-out">
+                <CardHeader>
+                  <CardTitle>{platformToolResult.type === 'schema' ? 'Platform Schema' : 'Platform Prompt Rules'}</CardTitle>
+                </CardHeader>
+                <CardContent className="flex-grow overflow-auto">
+                  <PlatformToolResultCard type={platformToolResult.type} content={platformToolResult.content} />
+                </CardContent>
+                <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
+                  <Button variant="ghost" size="icon" onClick={clearPlatformToolResult} aria-label="Close platform tool card">
+                    <X className="h-5 w-5" />
+                  </Button>
+                </CardFooter>
+              </Card>
             )}
           </div>
         )}
