@@ -378,12 +378,19 @@ export function useWebSocketChat(): UseWebSocketChatReturn {
 
     if (parsedMessage.type === "text" && typeof actualContentString === 'string') {
         if (messageSender === "OrchestratorAgent") {
+            // If the message from OrchestratorAgent contains <analysis>, extract and set as message content
+            const analysisTagRegex = /<analysis>([\s\S]*?)<\/analysis>/i;
+            const analysisMatch = actualContentString.match(analysisTagRegex);
+            if (analysisMatch && analysisMatch[1]) {
+                setMessages(prev => [...prev, { sender: messageSender, content: `<analysis>${analysisMatch[1]}</analysis>`, timestamp: currentTimestamp }]);
+                contentAdded = true;
+                return;
+            }
             // If the message from OrchestratorAgent does NOT contain "<thinking>", ignore it.
             if (actualContentString && !actualContentString.includes("<thinking>")) {
-                console.log("[DEBUG] OrchestratorAgent text message does not contain <thinking>. Ignoring. Content:", actualContentString);
+                console.log("[DEBUG] OrchestratorAgent text message does not contain <thinking> or <analysis>. Ignoring. Content:", actualContentString);
                 return; // Ignore the message
             }
-
             // If we reach here, the message contains "<thinking>". Proceed with existing logic.
             console.log("[DEBUG] OrchestratorAgent text message (processing for <thinking>):", actualContentString);
             const thinkingText = extractTextFromTag(actualContentString, 'thinking');

@@ -31,6 +31,8 @@ type DisplayItem =
   | { type: 'message'; data: MessageType; timestamp: number; id: string; }
   | { type: 'unified_progress'; data: UnifiedProgressItemType; timestamp: number; id: string; };
 
+const AD_PREVIEW_SELECTOR = "div.x1thq5gd.x1t2f2mz.x1xvdf8d.x1s688f.x1ix68h3.x1pi1tsx.x1l90r2v.x1tu34mt.x1a2a7pz.x1qjc9v5.x1q0g3np";
+
 export default function ChatPage() {
   const {
     messages,
@@ -64,6 +66,9 @@ export default function ChatPage() {
   const messagesEndRef = useRef<null | HTMLDivElement>(null);
   const unifiedProgressCardRef = useRef<null | HTMLDivElement>(null);
   const [selectedToolCall, setSelectedToolCall] = useState<{ id: string; functionName: string } | null>(null);
+  const [isUrlPreviewVisible, setIsUrlPreviewVisible] = useState(false);
+  const [urlToPreview, setUrlToPreview] = useState<string | null>(null);
+  const [scrapedImage, setScrapedImage] = useState<string | null>(null);
 
   const displayItems: DisplayItem[] = useMemo(() => {
     // 1. Map all messages from state to DisplayItem structure
@@ -243,136 +248,178 @@ export default function ChatPage() {
     }
   };
 
-  return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
-      <div className={`flex w-full mx-auto gap-4 h-[90vh] ${mainContentRowJustifyClass}`}>
-        <Card className={`flex flex-col ${chatCardWidthClass} ${chatCardHeightClass}`}>
-          <CardHeader>
-            <CardTitle>Chatbot</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-grow overflow-y-auto p-6 space-y-4">
-            {displayItems.map((item) => {
-              if (item.type === 'message') {
-                return <ChatMessageItem key={item.id} msg={item.data as MessageType} />;
-              }
-              if (item.type === 'unified_progress') {
-                return (
-                  <div key={item.id} ref={unifiedProgressCardRef}>
-                    <UnifiedProgressCard 
-                      item={item.data as UnifiedProgressItemType} 
-                      onToggleCollapse={toggleUnifiedProgressCollapse} 
-                      isAgentProcessing={isAgentProcessing}
-                      onToolCallClick={handleToolCallClick}
-                      selectedToolCallId={selectedToolCall?.id}
-                    />
-                  </div>
-                );
-              }
-              return null;
-            })}
-            <div ref={messagesEndRef} />
-          </CardContent>
-          <CardFooter className="p-6 border-t">
-            <form onSubmit={handleSendMessage} className="flex w-full space-x-2">
-              <Input
-                type="text"
-                value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
-                placeholder="Type your message..."
-                className="flex-grow"
-                autoFocus
-              />
-              <Button type="submit">Send</Button>
-            </form>
-          </CardFooter>
-        </Card>
+  // Handler to open URL preview overlay
+  const handleUrlPreview = async (url: string) => {
+    setUrlToPreview(url);
+    setIsUrlPreviewVisible(true);
+    setScrapedImage(null);
+    try {
+      const res = await fetch('http://localhost:8082/scrape', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (data.image_base64) {
+        setScrapedImage(data.image_base64);
+      }
+    } catch (e: any) {
+      setScrapedImage(null);
+    }
+  };
+  const handleCloseUrlPreview = () => {
+    setIsUrlPreviewVisible(false);
+    setUrlToPreview(null);
+    setScrapedImage(null);
+  };
 
-        {(isQueryPanelVisible || isSandboxPanelVisible || isToolPanelVisible) && (
-          <div className={`w-1/2 flex flex-col ${rightPanelGap} h-full relative`}>
-            {isQueryPanelVisible && (
-              <Card className={`flex flex-col w-full ${queryResultsCardHeight} transition-all duration-300 ease-in-out`}>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <div>
-                    <CardTitle>Query Results</CardTitle>
-                    {!isQueryPanelCollapsed && <CardDescription>Data from executed Cypher queries.</CardDescription>}
-                  </div>
-                  <div className="flex items-center">
-                    <Button variant="ghost" size="icon" onClick={toggleQueryPanelCollapse} aria-label={isQueryPanelCollapsed ? "Expand Query Results" : "Collapse Query Results"} className="mr-1">
-                      {isQueryPanelCollapsed ? <Maximize className="h-4 w-4" /> : <Minimize className="h-4 w-4" />}
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => setIsQueryPanelVisible(false)} aria-label="Close query panel">
-                      <X className="h-5 w-5" />
-                    </Button>
-                  </div>
-                </CardHeader>
-                {!isQueryPanelCollapsed && (
-                  <>
-                    <CardContent className="flex-grow overflow-hidden p-0 relative flex flex-col">
-                      {queryExecutions.length > 0 && activeQueryExecutionId ? (
-                        <Tabs value={activeQueryExecutionId} onValueChange={setActiveQueryExecutionId} className="flex flex-col flex-grow h-full w-full">
-                          <TabsList className="mx-2 mt-2 shrink-0 overflow-x-auto whitespace-nowrap justify-start">
-                            {queryExecutions.map((exec, index) => (
-                              <TabsTrigger key={exec.id} value={exec.id} className="text-xs px-2 py-1.5 h-auto flex items-center">
-                                {getStatusIcon(exec.status)}
-                                {exec.title || `Query ${index + 1}`}
-                              </TabsTrigger>
+  return (
+    <div className="flex flex-col min-h-screen bg-gray-50">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-background p-4">
+        <div className={`flex w-full mx-auto gap-4 h-[90vh] ${mainContentRowJustifyClass}`}>
+          <Card className={`flex flex-col ${chatCardWidthClass} ${chatCardHeightClass}`}>
+            <CardHeader>
+              <CardTitle>Chatbot</CardTitle>
+            </CardHeader>
+            <CardContent className="flex-grow overflow-y-auto p-6 space-y-4">
+              {displayItems.map((item) => {
+                if (item.type === 'message') {
+                  return <ChatMessageItem key={item.id} msg={item.data as MessageType} onUrlClick={handleUrlPreview} />;
+                }
+                if (item.type === 'unified_progress') {
+                  return (
+                    <div key={item.id} ref={unifiedProgressCardRef}>
+                      <UnifiedProgressCard 
+                        item={item.data as UnifiedProgressItemType} 
+                        onToggleCollapse={toggleUnifiedProgressCollapse} 
+                        isAgentProcessing={isAgentProcessing}
+                        onToolCallClick={handleToolCallClick}
+                        selectedToolCallId={selectedToolCall?.id}
+                      />
+                    </div>
+                  );
+                }
+                return null;
+              })}
+              <div ref={messagesEndRef} />
+            </CardContent>
+            <CardFooter className="p-6 border-t">
+              <form onSubmit={handleSendMessage} className="flex w-full space-x-2">
+                <Input
+                  type="text"
+                  value={newMessage}
+                  onChange={(e) => setNewMessage(e.target.value)}
+                  placeholder="Type your message..."
+                  className="flex-grow"
+                  autoFocus
+                />
+                <Button type="submit">Send</Button>
+              </form>
+            </CardFooter>
+          </Card>
+
+          {(isQueryPanelVisible || isSandboxPanelVisible || isToolPanelVisible || isUrlPreviewVisible) && (
+            <div className={`w-1/2 flex flex-col ${rightPanelGap} h-full relative`}>
+              {isQueryPanelVisible && (
+                <Card className={`flex flex-col w-full ${queryResultsCardHeight} transition-all duration-300 ease-in-out`}>
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <div>
+                      <CardTitle>Query Results</CardTitle>
+                      {!isQueryPanelCollapsed && <CardDescription>Data from executed Cypher queries.</CardDescription>}
+                    </div>
+                    <div className="flex items-center">
+                      <Button variant="ghost" size="icon" onClick={toggleQueryPanelCollapse} aria-label={isQueryPanelCollapsed ? "Expand Query Results" : "Collapse Query Results"} className="mr-1">
+                        {isQueryPanelCollapsed ? <Maximize className="h-4 w-4" /> : <Minimize className="h-4 w-4" />}
+                      </Button>
+                      <Button variant="ghost" size="icon" onClick={() => setIsQueryPanelVisible(false)} aria-label="Close query panel">
+                        <X className="h-5 w-5" />
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  {!isQueryPanelCollapsed && (
+                    <>
+                      <CardContent className="flex-grow overflow-hidden p-0 relative flex flex-col">
+                        {queryExecutions.length > 0 && activeQueryExecutionId ? (
+                          <Tabs value={activeQueryExecutionId} onValueChange={setActiveQueryExecutionId} className="flex flex-col flex-grow h-full w-full">
+                            <TabsList className="mx-2 mt-2 shrink-0 overflow-x-auto whitespace-nowrap justify-start">
+                              {queryExecutions.map((exec, index) => (
+                                <TabsTrigger key={exec.id} value={exec.id} className="text-xs px-2 py-1.5 h-auto flex items-center">
+                                  {getStatusIcon(exec.status)}
+                                  {exec.title || `Query ${index + 1}`}
+                                </TabsTrigger>
+                              ))}
+                            </TabsList>
+                            {queryExecutions.map((exec) => (
+                              <TabsContent key={exec.id} value={exec.id} className="flex-grow overflow-y-auto p-1 m-0 h-full">
+                                {exec.status === 'pending' && (
+                                  <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
+                                    <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading results...
+                                  </div>
+                                )}
+                                {exec.status === 'success' && (
+                                  <TableView data={exec.records} title={`Results for Query ${queryExecutions.findIndex(e => e.id === exec.id) + 1}`} />
+                                )}
+                                {exec.status === 'error' && (
+                                  <div className="p-6 text-red-500">
+                                    <p className="font-semibold">Error executing query:</p>
+                                    <p className="text-sm mt-1 whitespace-pre-wrap">{exec.errorDetails || 'Unknown error'}</p>
+                                    <p className="text-xs mt-2 text-muted-foreground">Query: <pre className="inline whitespace-pre-wrap">{exec.query}</pre></p>
+                                  </div>
+                                )}
+                              </TabsContent>
                             ))}
-                          </TabsList>
-                          {queryExecutions.map((exec) => (
-                            <TabsContent key={exec.id} value={exec.id} className="flex-grow overflow-y-auto p-1 m-0 h-full">
-                              {exec.status === 'pending' && (
-                                <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
-                                  <Loader2 className="h-6 w-6 animate-spin mr-2" /> Loading results...
-                                </div>
-                              )}
-                              {exec.status === 'success' && (
-                                <TableView data={exec.records} title={`Results for Query ${queryExecutions.findIndex(e => e.id === exec.id) + 1}`} />
-                              )}
-                              {exec.status === 'error' && (
-                                <div className="p-6 text-red-500">
-                                  <p className="font-semibold">Error executing query:</p>
-                                  <p className="text-sm mt-1 whitespace-pre-wrap">{exec.errorDetails || 'Unknown error'}</p>
-                                  <p className="text-xs mt-2 text-muted-foreground">Query: <pre className="inline whitespace-pre-wrap">{exec.query}</pre></p>
-                                </div>
-                              )}
-                            </TabsContent>
-                          ))}
-                        </Tabs>
-                      ) : (
-                        <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
-                          {isQueryPanelVisible && queryExecutions.length === 0 ? "No queries executed yet or panel was cleared." : "Processing..."}
-                        </div>
-                      )}
+                          </Tabs>
+                        ) : (
+                          <div className="p-6 text-center text-muted-foreground flex items-center justify-center h-full">
+                            {isQueryPanelVisible && queryExecutions.length === 0 ? "No queries executed yet or panel was cleared." : "Processing..."}
+                          </div>
+                        )}
+                      </CardContent>
+                      <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
+                        {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId) ? 
+                          `${queryExecutions.find(e => e.id === activeQueryExecutionId)?.records?.length || 0} record(s) in active tab. Total queries: ${queryExecutions.length}` 
+                          : "No active query or data."}
+                        {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'success' && "Query executed successfully."}
+                        {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'error' && "Query execution failed."}
+                        {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'pending' && "Query pending..."}
+                      </CardFooter>
+                    </>
+                  )}
+                </Card>
+              )}
+
+              {isSandboxPanelVisible && (
+                <SandboxPreviewPanel 
+                  isPanelVisible={isSandboxPanelVisible}
+                  isPanelCollapsed={isSandboxPanelCollapsed}
+                  togglePanelCollapse={toggleSandboxPanelCollapse}
+                  sandboxResult={sandboxResult}
+                  isLoading={isSandboxLoading}
+                  activeFragment={activeGraphFragment}
+                  clearSandboxPreview={() => setIsSandboxPanelVisible(false)}
+                  heightClass={sandboxWrapperHeight}
+                />
+              )}
+
+              {showToolCard && isQueryPanelVisible && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-auto">
+                  <Card className="flex flex-col w-5/6 max-w-2xl h-fit shadow-2xl border-2 border-primary">
+                    <CardHeader>
+                      <CardTitle>{platformToolResult.type === 'schema' ? 'Platform Schema' : 'Platform Prompt Rules'}</CardTitle>
+                    </CardHeader>
+                    <CardContent className="flex-grow overflow-auto">
+                      <PlatformToolResultCard type={platformToolResult.type} content={platformToolResult.content} />
                     </CardContent>
                     <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
-                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId) ? 
-                        `${queryExecutions.find(e => e.id === activeQueryExecutionId)?.records?.length || 0} record(s) in active tab. Total queries: ${queryExecutions.length}` 
-                        : "No active query or data."}
-                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'success' && "Query executed successfully."}
-                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'error' && "Query execution failed."}
-                      {activeQueryExecutionId && queryExecutions.find(e => e.id === activeQueryExecutionId)?.status === 'pending' && "Query pending..."}
+                      <Button variant="ghost" size="icon" onClick={clearPlatformToolResult} aria-label="Close platform tool card">
+                        <X className="h-5 w-5" />
+                      </Button>
                     </CardFooter>
-                  </>
-                )}
-              </Card>
-            )}
-
-            {isSandboxPanelVisible && (
-              <SandboxPreviewPanel 
-                isPanelVisible={isSandboxPanelVisible}
-                isPanelCollapsed={isSandboxPanelCollapsed}
-                togglePanelCollapse={toggleSandboxPanelCollapse}
-                sandboxResult={sandboxResult}
-                isLoading={isSandboxLoading}
-                activeFragment={activeGraphFragment}
-                clearSandboxPreview={() => setIsSandboxPanelVisible(false)}
-                heightClass={sandboxWrapperHeight}
-              />
-            )}
-
-            {showToolCard && isQueryPanelVisible && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/60 pointer-events-auto">
-                <Card className="flex flex-col w-5/6 max-w-2xl h-fit shadow-2xl border-2 border-primary">
+                  </Card>
+                </div>
+              )}
+              {showToolCard && !isQueryPanelVisible && (
+                <Card className="flex flex-col w-full h-full transition-all duration-300 ease-in-out">
                   <CardHeader>
                     <CardTitle>{platformToolResult.type === 'schema' ? 'Platform Schema' : 'Platform Prompt Rules'}</CardTitle>
                   </CardHeader>
@@ -385,26 +432,31 @@ export default function ChatPage() {
                     </Button>
                   </CardFooter>
                 </Card>
-              </div>
-            )}
-            {showToolCard && !isQueryPanelVisible && (
-              <Card className="flex flex-col w-full h-full transition-all duration-300 ease-in-out">
-                <CardHeader>
-                  <CardTitle>{platformToolResult.type === 'schema' ? 'Platform Schema' : 'Platform Prompt Rules'}</CardTitle>
-                </CardHeader>
-                <CardContent className="flex-grow overflow-auto">
-                  <PlatformToolResultCard type={platformToolResult.type} content={platformToolResult.content} />
-                </CardContent>
-                <CardFooter className="p-3 border-t text-xs text-muted-foreground shrink-0">
-                  <Button variant="ghost" size="icon" onClick={clearPlatformToolResult} aria-label="Close platform tool card">
-                    <X className="h-5 w-5" />
-                  </Button>
-                </CardFooter>
-              </Card>
-            )}
-          </div>
-        )}
+              )}
+
+              {isUrlPreviewVisible && urlToPreview && (
+                <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 pointer-events-auto">
+                  <div className="flex flex-col w-5/6 max-w-2xl h-[80vh] shadow-2xl border-2 border-primary bg-background relative">
+                    <div className="flex items-center justify-between p-4 border-b border-border">
+                      <span className="font-semibold text-lg truncate">Ad Preview Screenshot</span>
+                      <button onClick={handleCloseUrlPreview} className="text-gray-400 hover:text-white p-2 rounded transition-colors" title="Close Preview">
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
+                    <div className="flex-grow overflow-y-auto p-4 flex items-center justify-center" style={{ background: '#fafafa' }}>
+                      {scrapedImage ? (
+                        <img src={`data:image/png;base64,${scrapedImage}`} alt="Ad Preview" style={{ maxWidth: '100%', maxHeight: '60vh', display: 'block', margin: '0 auto' }} />
+                      ) : (
+                        <div className="text-center text-gray-500">Loading screenshot...</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
+      </div>
     </div>
   );
 }

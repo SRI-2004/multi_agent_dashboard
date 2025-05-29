@@ -17,6 +17,10 @@ RUN npx shadcn-ui@latest init -d --yes
 # Add shadcn/ui chart component
 RUN npx shadcn-ui@latest add chart --yes
 
+# Add shadcn Card and Typography components
+RUN npx shadcn-ui@latest add card --yes
+RUN npx shadcn-ui@latest add typography --yes
+
 # Install Chart.js (with React wrapper) and Recharts for additional charting options
 RUN npm install react-chartjs-2 chart.js recharts
 
@@ -25,6 +29,6 @@ RUN npm install @nivo/bar @nivo/line @nivo/pie
 
 # Move the Nextjs app to the home directory and remove the nextjs-app directory
 # This makes /home/user the root of the Next.js project.
-RUN mv /home/user/nextjs-app/* /home/user/ && rm -rf /home/user/nextjs-app
+RUN cp -a /home/user/nextjs-app/. /home/user/ && rm -rf /home/user/nextjs-app
 
 WORKDIR /home/user

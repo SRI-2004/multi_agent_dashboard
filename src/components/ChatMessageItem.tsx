@@ -6,9 +6,10 @@ import remarkGfm from 'remark-gfm';
 
 interface ChatMessageItemProps {
   msg: Message;
+  onUrlClick?: (url: string) => void;
 }
 
-export function ChatMessageItem({ msg }: ChatMessageItemProps) {
+export function ChatMessageItem({ msg, onUrlClick }: ChatMessageItemProps) {
   const isUser = msg.sender === "user";
 
   const rowClasses = (isUser ? "flex justify-end" : "flex justify-start") + " mb-3";
@@ -70,11 +71,77 @@ export function ChatMessageItem({ msg }: ChatMessageItemProps) {
   }
   
   if (msg.sender === "AnalysisAgent") {
+    let content = msg.content as string;
+    const urlRegex = /<url>([\s\S]*?)<\/url>/g;
+    const titleRegex = /<title>([\s\S]*?)<\/title>/i;
+    const parts: (string | { url: string, title: string })[] = [];
+    let lastIndex = 0;
+    let match;
+    while ((match = urlRegex.exec(content)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(content.slice(lastIndex, match.index));
+      }
+      const urlBlock = match[1];
+      const titleMatch = urlBlock.match(titleRegex);
+      const title = titleMatch ? titleMatch[1] : match[1];
+      const url = urlBlock.replace(titleRegex, '').replace(/<title>[\s\S]*?<\/title>/i, '').trim();
+      parts.push({ url, title });
+      lastIndex = urlRegex.lastIndex;
+    }
+    if (lastIndex < content.length) {
+      parts.push(content.slice(lastIndex));
+    }
     return (
       <div className={rowClasses}>
         <div className={analysisAgentBubbleClasses}>
+          {parts.map((part, i) => {
+            if (typeof part === 'string') {
+              return <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={markdownComponents}>{part}</ReactMarkdown>;
+            } else {
+              return (
+                <a
+                  key={i}
+                  href={part.url}
+                  className="text-blue-600 underline break-all hover:text-blue-800 cursor-pointer"
+                  onClick={e => {
+                    e.preventDefault();
+                    if (onUrlClick) onUrlClick(part.url);
+                  }}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {part.title}
+                </a>
+              );
+            }
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  if (msg.sender === "OrchestratorAgent") {
+    let content = msg.content as string;
+    // Parse <analysis>...</analysis> tags
+    const analysisTagRegex = /<analysis>([\s\S]*?)<\/analysis>/i;
+    const analysisMatch = content.match(analysisTagRegex);
+    if (analysisMatch && analysisMatch[1]) {
+      return (
+        <div className={rowClasses}>
+          <div className={analysisAgentBubbleClasses}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+              {analysisMatch[1]}
+            </ReactMarkdown>
+          </div>
+        </div>
+      );
+    }
+    // Fallback: render as normal agent message
+    return (
+      <div className={rowClasses}>
+        <div className={agentBubbleClasses}>
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-            {msg.content as string}
+            {content}
           </ReactMarkdown>
         </div>
       </div>
