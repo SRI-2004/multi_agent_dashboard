@@ -126,11 +126,13 @@ export function ChatMessageItem({ msg, onUrlClick }: ChatMessageItemProps) {
     const analysisTagRegex = /<analysis>([\s\S]*?)<\/analysis>/i;
     const analysisMatch = content.match(analysisTagRegex);
     if (analysisMatch && analysisMatch[1]) {
+      // Remove TERMINATE from the end if present
+      let analysisText = analysisMatch[1].replace(/\s*TERMINATE\s*$/i, '').trim();
       return (
         <div className={rowClasses}>
           <div className={analysisAgentBubbleClasses}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
-              {analysisMatch[1]}
+              {analysisText}
             </ReactMarkdown>
           </div>
         </div>
